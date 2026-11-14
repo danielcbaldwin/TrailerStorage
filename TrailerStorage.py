@@ -29,7 +29,7 @@ import time
 
 LOG = logging.getLogger("TrailerStorage")
 
-VERSION = "1.0"
+VERSION = "1.1"
 TICK_S = 15
 
 # ---------------------------------------------------------------- controller --
@@ -203,7 +203,12 @@ def main():
         return get(SYS, "/VebusService")
 
     def battery_service():
-        return get(SYS, "/ActiveBatteryService") or get(SYS, "/Dc/Battery/BatteryService")
+        # /Dc/Battery/BatteryService is a D-Bus name (com.victronenergy.battery.ttyS5);
+        # /ActiveBatteryService is "com.victronenergy.battery/278" (service/instance), NOT queryable
+        name = get(SYS, "/Dc/Battery/BatteryService")
+        if name and "/" not in str(name):
+            return str(name)
+        return None
 
     ctl = Controller(cfg())
     st = {"shore_lost_at": None, "restore_checks": 0, "last_soc_ok": time.time(), "last_limit": None, "hb": 0,
@@ -281,7 +286,7 @@ def main():
         if not int(c["Enabled"]):
             if int(c["Engaged"]):
                 disengage("disabled")
-            elif svc["/State"] != IDLE:
+            elif svc["/State"] != IDLE or svc["/StatusText"] == "starting":
                 set_status(IDLE, "off")
             return
 
