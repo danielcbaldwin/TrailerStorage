@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# setup for TrailerStorage
+# installs the TrailerStorage service (storage-SOC hold for a LiFePO4 bank via DVCC)
+# the service does nothing until /Settings/TrailerStorage/Enabled is set to 1
+
+#### following line incorporates helper resources into this script
+source "/data/SetupHelper/HelperResources/IncludeHelpers"
+#### end of lines to include helper resources
+
+if [ "$scriptAction" == 'NONE' ]; then
+	standardActionPrompt
+fi
+
+if [ "$scriptAction" == 'UNINSTALL' ]; then
+	# hand the system back (DVCC + charge limits restored) before the service is removed
+	logMessage "disabling TrailerStorage before uninstall"
+	dbus -y com.victronenergy.settings /Settings/TrailerStorage/Enabled SetValue %0 &> /dev/null
+	sleep 35
+fi
+
+endScript 'INSTALL_SERVICES'

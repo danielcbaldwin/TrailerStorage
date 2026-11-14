@@ -1,0 +1,3 @@
+v1.0
+	initial release: storage SOC band hold via DVCC charge-current trim,
+	monthly full charge, shore-loss auto exit, restore of VE.Bus charge limit
