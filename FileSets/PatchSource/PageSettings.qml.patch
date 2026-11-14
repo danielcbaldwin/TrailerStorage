@@ -1,0 +1,16 @@
+--- PageSettings.qml.orig
++++ PageSettings.qml
+@@ -63,6 +63,13 @@
+ 			}
+ 		}
+ 
++//////// added by TrailerStorage
++		MbSubMenu {
++			description: qsTr("Trailer storage")
++			// loaded at runtime so an error in the page can't break this menu
++			subpage: Qt.createComponent("PageSettingsTrailerStorage.qml")
++		}
++
+ 		MbSubMenu {
+ 			id: displayItem
+ 			description: qsTr("Display & language")

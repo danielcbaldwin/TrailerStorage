@@ -37,6 +37,12 @@ It restores the system's normal settings — `Settings/Services/Bol` (DVCC), `Se
 Restore values are settings (`RestoreBol`, `RestoreMaxChargeCurrent`, `RestoreVebusChargeCurrent`) — set them to
 your system's normal configuration before enabling.
 
+## On the GX screen
+
+Settings → **Trailer storage** (classic GUI, added just below DVCC): storage-mode on/off, floor, ceiling,
+full-charge interval, *Full charge now*, and live status. The menu entry is a SetupHelper patch to
+`PageSettings.qml`; the page itself is loaded at runtime so a problem in it cannot break the Settings menu.
+
 ## Settings (`com.victronenergy.settings`, `/Settings/TrailerStorage/...`)
 
 `Enabled`, `Floor`, `Ceiling`, `DrainCurrent`, `ChargeCurrent`, `FullChargeDays`, `ForceFullCharge`,

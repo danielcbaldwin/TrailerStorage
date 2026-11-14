@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # setup for TrailerStorage
-# installs the TrailerStorage service (storage-SOC hold for a LiFePO4 bank via DVCC)
+# installs the TrailerStorage service and its GUI page (Settings -> Trailer storage)
 # the service does nothing until /Settings/TrailerStorage/Enabled is set to 1
 
 #### following line incorporates helper resources into this script
@@ -19,4 +19,4 @@ if [ "$scriptAction" == 'UNINSTALL' ]; then
 	sleep 35
 fi
 
-endScript 'INSTALL_SERVICES'
+endScript 'INSTALL_FILES' 'INSTALL_SERVICES'
