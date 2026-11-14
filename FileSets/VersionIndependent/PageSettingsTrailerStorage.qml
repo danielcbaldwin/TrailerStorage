@@ -118,6 +118,101 @@ MbPage {
 			show: root.running
 		}
 
+		MbSubMenu {
+			description: qsTr("Advanced")
+			subpage: Component {
+				MbPage {
+					title: qsTr("Trailer storage: advanced")
+					model: VisibleItemModel {
+
+						MbSpinBox {
+							description: qsTr("Drift-down rate (above ceiling)")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/DrainCurrent")
+								unit: "A"
+								decimals: 1
+								step: 0.5
+								min: 0
+								max: 20
+							}
+						}
+
+						MbSpinBox {
+							description: qsTr("Charge rate (below floor)")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/ChargeCurrent")
+								unit: "A"
+								decimals: 1
+								step: 0.5
+								min: 1
+								max: 50
+							}
+						}
+
+						MbSpinBox {
+							description: qsTr("No charging below")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/MinChargeTempC")
+								unit: "\u00b0C"
+								decimals: 0
+								step: 1
+								min: -20
+								max: 20
+							}
+						}
+
+						MbSpinBox {
+							description: qsTr("Shore loss delay before exit")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/ShoreLossSeconds")
+								unit: "s"
+								decimals: 0
+								step: 15
+								min: 15
+								max: 3600
+							}
+						}
+
+						MbSpinBox {
+							description: qsTr("Restore: max charge current")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/RestoreMaxChargeCurrent")
+								unit: "A"
+								decimals: 0
+								step: 1
+								min: -1
+								max: 1000
+							}
+						}
+
+						MbSpinBox {
+							description: qsTr("Restore: MultiPlus charge current")
+							writeAccessLevel: User.AccessUser
+							item {
+								bind: Utils.path(root.settingsPath, "/RestoreVebusChargeCurrent")
+								unit: "A"
+								decimals: 0
+								step: 1
+								min: 1
+								max: 1000
+							}
+						}
+
+						MbSwitch {
+							name: qsTr("Restore: DVCC on")
+							bind: Utils.path(root.settingsPath, "/RestoreBol")
+							writeAccessLevel: User.AccessUser
+						}
+					}
+				}
+			}
+		}
+
 		MbItemText {
 			text: qsTr("While storage mode is on, this service controls DVCC and the charge current limit. It turns itself off when shore power is lost and restores the normal settings.")
 			wrapMode: Text.WordWrap
