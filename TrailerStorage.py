@@ -26,6 +26,16 @@ already running keeps charging on whatever solar there is while its timeout cloc
 is paused until shore returns. Storage mode can also be enabled while off shore.
 Turn storage mode off before using the trailer with a generator -- the generator
 would otherwise be treated like shore power and held to the band.
+
+v1.3 (deep winter: BMS low-temperature cut-off powers everything down):
+* After a service start or a gap in battery data, a HIGH SOC reading is not trusted
+  (a SmartShunt that lost power can wake up "synchronised" at 100 %). Until it is
+  verified the controller never drains the bank: it is verified if the shunt kept its
+  history (time since full charge >= 6 h), or by a real sync (100 % with the voltage to
+  match); with shore power present it does a full charge to resync.
+* Voltage backstop: below LowVoltage (default 12.9 V) it stops throttling charging.
+* Cold: below MinChargeTempC the target battery current is <= 0 A in EVERY state
+  (chargers keep powering the loads, the cells just aren't charged).
 """
 
 import logging
@@ -35,7 +45,7 @@ import time
 
 LOG = logging.getLogger("TrailerStorage")
 
-VERSION = "1.2"
+VERSION = "1.3"
 TICK_S = 15
 
 # ---------------------------------------------------------------- controller --
@@ -63,12 +73,19 @@ class Controller:
         self.full_result = ""
         self.full_noshore_s = 0.0     # time spent without shore power during the current full charge
         self._last_now = None
+        self.verified = True          # False after a restart / battery-data gap until the SOC is confirmed
+
+    SYNC_VOLTAGE = 13.35              # a real full LiFePO4 sits at/above this; a "fake" 100 % after power-up doesn't
+
+    def mark_unverified(self, since_full_s):
+        """Call after a service start or a battery-data gap. If the shunt kept its history it wasn't reset."""
+        self.verified = since_full_s is not None and since_full_s >= 6 * 3600
 
     def start(self, soc):
         self.limit = float(self.MAX_LIMIT)
         self.state = HOLD_DOWN if soc >= self.cfg["Ceiling"] else HOLD_UP
 
-    def step(self, soc, batt_i, temp_c, since_full_s, force_full, now=None, shore=True):
+    def step(self, soc, batt_i, temp_c, since_full_s, force_full, now=None, shore=True, volt=None):
         """shore: True if shore power is present (debounced by the caller); a full charge only starts with it."""
         now = time.time() if now is None else now
         dt = 0.0 if self._last_now is None else max(0.0, now - self._last_now)
@@ -76,6 +93,10 @@ class Controller:
         c = self.cfg
         floor, ceil = c["Floor"], c["Ceiling"]
         cold = temp_c is not None and temp_c < c["MinChargeTempC"]
+        low_v = volt is not None and volt < c.get("LowVoltage", 12.9)
+        if not self.verified and since_full_s is not None and since_full_s < 3600 and soc >= 99.9 \
+                and volt is not None and volt >= self.SYNC_VOLTAGE:
+            self.verified = True            # a real sync (100 % and the voltage of a full pack)
         cooled_down = self.full_ended is None or now - self.full_ended > self.FULL_RETRY_S
         full_due = force_full or (c["FullChargeDays"] > 0 and cooled_down and since_full_s is not None
                                   and since_full_s > c["FullChargeDays"] * 86400)
@@ -84,9 +105,12 @@ class Controller:
         if self.state == FULL:
             if not shore:
                 self.full_noshore_s += dt        # timeout only counts time WITH shore power
-            synced = soc >= 99.9 and (since_full_s is None or since_full_s < 3600)
+            synced = soc >= 99.9 and (since_full_s is None or since_full_s < 3600) \
+                and (volt is None or volt >= self.SYNC_VOLTAGE)      # v1.3: a fake power-up "100 %" isn't a sync
             if synced or cold or now - self.full_started - self.full_noshore_s > self.FULL_TIMEOUT_S:
                 self.full_result = "ok" if synced else ("aborted: cold" if cold else "timeout: never synced")
+                if synced:
+                    self.verified = True
                 self.full_ended = now
                 self.full_started = None
                 self.state = HOLD_DOWN
@@ -105,15 +129,26 @@ class Controller:
             self.state = HOLD_UP
         elif self.state not in (HOLD_DOWN, HOLD_UP):
             self.state = HOLD_UP
+        # v1.3 guards
+        if low_v and self.state != FULL:
+            self.state = LOW                # voltage says the pack is low, whatever the SOC reading says
+        if not self.verified and self.state == HOLD_DOWN:
+            if shore and not cold:          # resync with a full charge instead of draining on a doubtful reading
+                self.state = FULL
+                self.full_started = now
+                self.full_noshore_s = 0.0
+                self.full_result = "running (resync after power loss)"
+            else:
+                self.state = HOLD_UP        # never drain on an unverified reading
 
         # --- output
-        if self.state in (FULL, LOW):
+        if self.state in (FULL, LOW) and not cold:
             self.limit = float(self.MAX_LIMIT)
             return int(self.limit)
 
         target = -c["DrainCurrent"] if self.state == HOLD_DOWN else c["ChargeCurrent"]
-        if temp_c is not None and temp_c < c["MinChargeTempC"]:
-            target = min(target, 0.0)       # never push charge into a cold pack
+        if cold:
+            target = min(target, 0.0)       # never push charge into a cold pack (any state): chargers still run the loads
         err = target - batt_i
         if abs(err) < self.DEADBAND:
             err = 0.0
@@ -152,6 +187,7 @@ def main():
         "ForceFullCharge":  ["/Settings/TrailerStorage/ForceFullCharge", 0, 0, 1],
         "MinChargeTempC":   ["/Settings/TrailerStorage/MinChargeTempC", 2.0, -20.0, 20.0],
         "ShoreLossSeconds": ["/Settings/TrailerStorage/ShoreLossSeconds", 120, 15, 3600],
+        "LowVoltage":       ["/Settings/TrailerStorage/LowVoltage", 12.9, 11.0, 13.4],
         "Engaged":          ["/Settings/TrailerStorage/Engaged", 0, 0, 1],
         # values written back on disengage (this system's normal configuration)
         "RestoreBol":            ["/Settings/TrailerStorage/RestoreBol", 0, 0, 1],
@@ -284,6 +320,7 @@ def main():
         ctl.cfg = c
         soc = get(SYS, "/Dc/Battery/Soc")
         batt_i = get(SYS, "/Dc/Battery/Current")
+        volt = get(SYS, "/Dc/Battery/Voltage")
         temp = get(SYS, "/Dc/Battery/Temperature")
         svc["/Soc"] = None if soc is None else round(float(soc), 1)
         vb = vebus()
@@ -309,9 +346,14 @@ def main():
             if time.time() - st["last_soc_ok"] > 300:
                 if int(c["Engaged"]):
                     disengage("battery data stale")
+                st["data_gap"] = True
                 set_status(FAULT, "battery data unavailable")
             return
         st["last_soc_ok"] = time.time()
+        if st.get("data_gap", True):        # first data after a service start or a gap: re-check the SOC
+            st["data_gap"] = False
+            ctl.mark_unverified(None if since_full is None else float(since_full))
+            LOG.info("battery data (re)appeared: SOC %s verified=%s", soc, ctl.verified)
         soc, batt_i = float(soc), float(batt_i)
         temp = None if temp is None else float(temp)
 
@@ -331,7 +373,8 @@ def main():
             ctl.start(soc)
 
         limit = ctl.step(soc, batt_i, temp, None if since_full is None else float(since_full),
-                         bool(int(c["ForceFullCharge"])), shore=shore_ok)
+                         bool(int(c["ForceFullCharge"])), shore=shore_ok,
+                         volt=None if volt is None else float(volt))
         if ctl.state == HOLD_DOWN and int(c["ForceFullCharge"]):
             settings["ForceFullCharge"] = 0          # forced full charge finished
         # MaxChargeCurrent is a flash-backed setting: write at most once a minute
@@ -353,6 +396,12 @@ def main():
                  FULL: "monthly full charge (balancing / shunt sync)",
                  LOW: "below band: charging normally to %d%%" % c["Floor"]}
         text = texts.get(ctl.state, ctl.state)
+        if temp is not None and temp < c["MinChargeTempC"]:
+            text = "too cold to charge (%.0f C): charging paused" % temp
+        elif volt is not None and float(volt) < c["LowVoltage"] and ctl.state == LOW:
+            text = "battery voltage low (%.2f V): charging normally" % float(volt)
+        elif not ctl.verified:
+            text += " - SOC unverified since power-up (resyncs on next full charge)"
         if not shore_ok:
             text += " (solar only, no shore power)"
             if ctl.state != FULL and ctl.cfg["FullChargeDays"] > 0 and since_full is not None \

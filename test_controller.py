@@ -74,10 +74,10 @@ o, s, c = sim(5, 30.0, 5 * 86400)
 lo, hi = summary("3 start below band", o, s, c, skip_h=24)
 ok &= LOW in s and lo >= 48 and hi <= 62
 
-# 4. cold pack: never targets net charge in hold states
+# 4. cold pack: never targets net charge (any state); chargers keep covering the loads
 o, s, c = sim(3, 55.0, 5 * 86400, temp=-5.0)
 lo, hi = summary("4 cold (-5 C)", o, s, c)
-ok &= FULL not in s
+ok &= FULL not in s and lo >= 50 and hi <= 56
 
 # 5. controller dies mid-run: how fast does the frozen limit drift?
 o, s, c = sim(6, 60.5, 5 * 86400, die_at=3600)
@@ -119,6 +119,42 @@ out_9 = lambda t: not (2 * 3600 <= t < 2 * 86400 + 2 * 3600)
 o, s, c = sim(6, 40.0, 40 * 86400, shore=out_9)
 summary("9 shore lost during full charge", o, s, c)
 ok &= c.full_result == "ok"
+
+# 10. (v1.3) BMS cold cut-off -> shunt wakes up "synchronised" at 100 % but the pack is really ~40 % (13.15 V)
+for shore in (True, False):
+    ctl = Controller(dict(CFG)); ctl.start(100.0); ctl.mark_unverified(0.0)
+    states10 = set()
+    for i in range(40):
+        lim = ctl.step(100.0, 0.0, 15.0, 0.0, False, now=i * TICK, shore=shore, volt=13.15)
+        states10.add(ctl.state)
+    print(f"{'10 fake 100% after power-up, shore=' + str(shore):42} states={sorted(states10)} limit={lim} verified={ctl.verified}")
+    ok &= HOLD_DOWN not in states10 and not ctl.verified and lim > 0
+    ok &= (FULL in states10) if shore else (HOLD_UP in states10)
+# ...then a real sync (100 % at 13.5 V) verifies it and normal holding resumes
+ctl.step(100.0, 2.0, 15.0, 60.0, False, now=1e6, shore=True, volt=13.5)
+ctl.step(100.0, 0.0, 15.0, 120.0, False, now=1e6 + TICK, shore=True, volt=13.4)
+print(f"{'10b real sync afterwards':42} verified={ctl.verified} state={ctl.state}")
+ok &= ctl.verified and ctl.state == HOLD_DOWN
+
+# 11. (v1.3) shunt kept its history (5 days since full): trusted immediately
+ctl = Controller(dict(CFG)); ctl.start(58.0); ctl.mark_unverified(5 * 86400)
+ctl.step(61.0, 0.0, 15.0, 5 * 86400, False, now=0, volt=13.28)
+print(f"{'11 shunt history intact':42} verified={ctl.verified} state={ctl.state}")
+ok &= ctl.verified and ctl.state == HOLD_DOWN
+
+# 12. (v1.3) cold pack: no charge current in ANY state (LOW recovery, full charge)
+ctl = Controller(dict(CFG)); ctl.start(30.0)
+lim_low = ctl.step(30.0, 20.0, -5.0, 5 * 86400, False, now=0, volt=13.0)      # chargers pushing 20 A into a cold pack
+ctl2 = Controller(dict(CFG)); ctl2.start(55.0)
+lim_full = ctl2.step(55.0, 20.0, -5.0, 40 * 86400, False, now=0, volt=13.2)
+print(f"{'12 cold: limit in LOW / when full due':42} {lim_low} / {lim_full} (states {ctl.state}, {ctl2.state})")
+ok &= lim_low <= 2 and lim_full <= 2 and ctl2.state != FULL      # charge current pulled to ~0 at once
+
+# 13. (v1.3) low voltage overrides a high SOC reading
+ctl = Controller(dict(CFG)); ctl.start(70.0)
+lim = ctl.step(70.0, -3.0, 15.0, 5 * 86400, False, now=0, volt=12.7)
+print(f"{'13 SOC says 70% but 12.7 V':42} state={ctl.state} limit={lim}")
+ok &= ctl.state == LOW and lim >= 150
 
 print("PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)

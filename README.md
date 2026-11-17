@@ -43,6 +43,18 @@ returns. The status text adds "(solar only, no shore power)". Storage mode can a
 **Turn storage mode off before using the trailer with a generator** — a generator on the AC input looks like shore
 power and would be held to the storage band.
 
+### Deep winter / BMS cut-off (v1.3)
+
+When the batteries' BMS cuts off in the cold, the whole DC side (GX, SmartShunt) loses power. A SmartShunt that loses
+power can wake up "synchronised" at 100 %, so after a service start or any gap in battery data a **high SOC reading is
+not trusted** until it is confirmed: either the shunt kept its history (time since last full charge ≥ 6 h) or a real
+sync happens (100 % with full-pack voltage, ≥ 13.35 V). Until then it never drains the bank — with shore power it
+runs a full charge to resync, without it it just doesn't throttle charging. Two backstops apply at all times:
+
+* `LowVoltage` (default 12.9 V): below it the pack is treated as low and charging is not throttled, whatever the SOC says.
+* `MinChargeTempC` (default 2 °C): below it the target battery current is ≤ 0 A in every state (the chargers still
+  power the loads, the cells are not charged).
+
 Restore values are settings (`RestoreBol`, `RestoreMaxChargeCurrent`, `RestoreVebusChargeCurrent`) — set them to
 your system's normal configuration before enabling.
 

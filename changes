@@ -1,3 +1,9 @@
+v1.3
+	deep winter: after a service start / battery-data gap a high SOC is unverified until the
+	shunt history or a real (voltage-confirmed) sync confirms it -- never drains on it, resyncs
+	with a full charge when shore is present; LowVoltage backstop (12.9 V) forces normal
+	charging; cold (< MinChargeTempC) now means <= 0 A into the pack in every state
+
 v1.2
 	shore power loss no longer exits storage mode: keeps holding the band on solar only
 	(after ShoreLossSeconds); monthly full charge only starts with shore power, a running
