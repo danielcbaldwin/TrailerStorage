@@ -1,7 +1,7 @@
 # TrailerStorage
 
 A small [SetupHelper](https://github.com/kwindrem/SetupHelper) package for a Victron GX (Cerbo) that holds a
-LiFePO4 bank in a storage state-of-charge band (default 50–60 %) while the RV/trailer sits on shore power,
+LiFePO4 bank in a storage state-of-charge band (default 50–60 %) while the RV/trailer sits in storage (on shore power and/or solar),
 **without** ESS and without a BMS connected to the GX.
 
 It runs on the GX, so it keeps working when the internet / VRM / Home Assistant is down.
@@ -29,10 +29,19 @@ It restores the system's normal settings — `Settings/Services/Bol` (DVCC), `Se
 **and** the VE.Bus `/Dc/0/MaxChargeCurrent` (which otherwise stays latched at the last DVCC value) — when:
 
 * `Enabled` is set to 0,
-* shore power is lost for `ShoreLossSeconds` (default 120 s) — `Enabled` is cleared too, so a generator later sees a
-  normal charger,
 * battery data is unavailable for 5 minutes,
 * the package is uninstalled.
+
+### Without shore power (v1.2)
+
+Losing shore power does **not** end storage mode. After `ShoreLossSeconds` (default 120 s, so short blips are
+ignored) it simply keeps holding the band with whatever solar is available: above the band it still trims the
+(solar) charge current, below the band it lets all solar in. A due monthly full charge only **starts** with shore
+power present; a full charge already running keeps charging on solar while its 24 h timeout is paused until shore
+returns. The status text adds "(solar only, no shore power)". Storage mode can also be enabled while off shore.
+
+**Turn storage mode off before using the trailer with a generator** — a generator on the AC input looks like shore
+power and would be held to the storage band.
 
 Restore values are settings (`RestoreBol`, `RestoreMaxChargeCurrent`, `RestoreVebusChargeCurrent`) — set them to
 your system's normal configuration before enabling.

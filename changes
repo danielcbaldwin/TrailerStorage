@@ -1,3 +1,9 @@
+v1.2
+	shore power loss no longer exits storage mode: keeps holding the band on solar only
+	(after ShoreLossSeconds); monthly full charge only starts with shore power, a running
+	one keeps charging on solar with its timeout paused until shore returns; storage mode
+	can be enabled while off shore; status adds "(solar only, no shore power)"
+
 v1.1
 	fix: read time-since-full-charge from /Dc/Battery/BatteryService (the monthly full
 	charge never triggered); status shows "off" instead of "starting" while idle

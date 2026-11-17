@@ -17,9 +17,15 @@ last limit stays in place and the battery only creeps slowly in either direction
 
 It disengages and restores the original settings (DVCC off, system max charge
 current, AND the VE.Bus /Dc/0/MaxChargeCurrent which otherwise stays latched)
-when: Enabled goes to 0, shore power is lost for ShoreLossSeconds (Enabled is
-then cleared too, so a generator later sees a normal charger), or the battery
-data goes stale.
+when: Enabled goes to 0, or the battery data goes stale.
+
+v1.2: losing shore power does NOT end storage mode any more. With no shore power
+(for ShoreLossSeconds, so short blips are ignored) it keeps holding the band on
+solar alone; a due full charge only STARTS with shore power, and a full charge
+already running keeps charging on whatever solar there is while its timeout clock
+is paused until shore returns. Storage mode can also be enabled while off shore.
+Turn storage mode off before using the trailer with a generator -- the generator
+would otherwise be treated like shore power and held to the band.
 """
 
 import logging
@@ -29,7 +35,7 @@ import time
 
 LOG = logging.getLogger("TrailerStorage")
 
-VERSION = "1.1"
+VERSION = "1.2"
 TICK_S = 15
 
 # ---------------------------------------------------------------- controller --
@@ -55,13 +61,18 @@ class Controller:
         self.full_started = None
         self.full_ended = None
         self.full_result = ""
+        self.full_noshore_s = 0.0     # time spent without shore power during the current full charge
+        self._last_now = None
 
     def start(self, soc):
         self.limit = float(self.MAX_LIMIT)
         self.state = HOLD_DOWN if soc >= self.cfg["Ceiling"] else HOLD_UP
 
-    def step(self, soc, batt_i, temp_c, since_full_s, force_full, now=None):
+    def step(self, soc, batt_i, temp_c, since_full_s, force_full, now=None, shore=True):
+        """shore: True if shore power is present (debounced by the caller); a full charge only starts with it."""
         now = time.time() if now is None else now
+        dt = 0.0 if self._last_now is None else max(0.0, now - self._last_now)
+        self._last_now = now
         c = self.cfg
         floor, ceil = c["Floor"], c["Ceiling"]
         cold = temp_c is not None and temp_c < c["MinChargeTempC"]
@@ -71,15 +82,18 @@ class Controller:
 
         # --- state transitions
         if self.state == FULL:
+            if not shore:
+                self.full_noshore_s += dt        # timeout only counts time WITH shore power
             synced = soc >= 99.9 and (since_full_s is None or since_full_s < 3600)
-            if synced or cold or now - self.full_started > self.FULL_TIMEOUT_S:
+            if synced or cold or now - self.full_started - self.full_noshore_s > self.FULL_TIMEOUT_S:
                 self.full_result = "ok" if synced else ("aborted: cold" if cold else "timeout: never synced")
                 self.full_ended = now
                 self.full_started = None
                 self.state = HOLD_DOWN
-        elif full_due and not cold:
+        elif full_due and not cold and shore:
             self.state = FULL
             self.full_started = now
+            self.full_noshore_s = 0.0
             self.full_result = "running"
         elif soc < floor - 5:
             self.state = LOW
@@ -301,27 +315,23 @@ def main():
         soc, batt_i = float(soc), float(batt_i)
         temp = None if temp is None else float(temp)
 
+        # shore power only affects WHEN a full charge may start (v1.2: no disengage on shore loss)
         if shore is False:
             if st["shore_lost_at"] is None:
                 st["shore_lost_at"] = time.time()
-            if time.time() - st["shore_lost_at"] >= c["ShoreLossSeconds"]:
-                st["shore_lost_at"] = None
-                disengage("shore power lost", clear_enabled=True)
-                return
+            shore_ok = time.time() - st["shore_lost_at"] < c["ShoreLossSeconds"]
         else:
             st["shore_lost_at"] = None
+            shore_ok = True          # present, or unknown (no VE.Bus) -> behave as before
 
         if not int(c["Engaged"]):
-            if shore is not True:
-                set_status(IDLE, "waiting for shore power")
-                return
             engage(soc)
         elif ctl.state == IDLE:          # service restarted while engaged
             put(SET, "/Settings/Services/Bol", 1)
             ctl.start(soc)
 
         limit = ctl.step(soc, batt_i, temp, None if since_full is None else float(since_full),
-                         bool(int(c["ForceFullCharge"])))
+                         bool(int(c["ForceFullCharge"])), shore=shore_ok)
         if ctl.state == HOLD_DOWN and int(c["ForceFullCharge"]):
             settings["ForceFullCharge"] = 0          # forced full charge finished
         # MaxChargeCurrent is a flash-backed setting: write at most once a minute
@@ -342,7 +352,13 @@ def main():
                  HOLD_UP: "holding: charging slowly to %d%%" % c["Ceiling"],
                  FULL: "monthly full charge (balancing / shunt sync)",
                  LOW: "below band: charging normally to %d%%" % c["Floor"]}
-        set_status(ctl.state, texts.get(ctl.state, ctl.state))
+        text = texts.get(ctl.state, ctl.state)
+        if not shore_ok:
+            text += " (solar only, no shore power)"
+            if ctl.state != FULL and ctl.cfg["FullChargeDays"] > 0 and since_full is not None \
+                    and float(since_full) > ctl.cfg["FullChargeDays"] * 86400:
+                text += "; full charge waiting for shore power"
+        set_status(ctl.state, text)
 
     # startup: if we left the system modified but are no longer enabled, clean up
     if int(settings["Engaged"]) and not int(settings["Enabled"]):

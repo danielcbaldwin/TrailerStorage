@@ -165,7 +165,7 @@ MbPage {
 						}
 
 						MbSpinBox {
-							description: qsTr("Shore loss delay before exit")
+							description: qsTr("Shore loss delay (ignore blips)")
 							writeAccessLevel: User.AccessUser
 							item {
 								bind: Utils.path(root.settingsPath, "/ShoreLossSeconds")
@@ -214,7 +214,7 @@ MbPage {
 		}
 
 		MbItemText {
-			text: qsTr("While storage mode is on, this service controls DVCC and the charge current limit. It turns itself off when shore power is lost and restores the normal settings.")
+			text: qsTr("While storage mode is on, this service controls DVCC and the charge current limit. Without shore power it keeps holding the band on solar and waits for shore power to start a full charge. Turning storage mode off restores the normal settings - do that before using a generator.")
 			wrapMode: Text.WordWrap
 			horizontalAlignment: Text.AlignLeft
 		}

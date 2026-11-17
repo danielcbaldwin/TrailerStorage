@@ -22,7 +22,7 @@ def solar_a(t):         # daytime up to 20 A
     return max(0.0, 20.0 * math.sin(math.pi * (h - 7) / 10)) if 7 <= h <= 17 else 0.0
 
 
-def sim(days, soc0, since_full0, temp=15.0, cfg=CFG, force=False, die_at=None):
+def sim(days, soc0, since_full0, temp=15.0, cfg=CFG, force=False, die_at=None, shore=lambda t: True):
     ctl = Controller(dict(cfg))
     ctl.start(soc0)
     soc, since_full, applied = soc0, since_full0, 150.0
@@ -32,7 +32,7 @@ def sim(days, soc0, since_full0, temp=15.0, cfg=CFG, force=False, die_at=None):
     while t < days * 86400:
         load = load_a(t)
         # chargers deliver up to the limit applied last tick (+~1 A slop seen in the field)
-        avail = 120.0 + solar_a(t)
+        avail = (120.0 if shore(t) else 0.0) + solar_a(t)     # no shore: solar only
         charge = min(applied + 1.0, avail)
         if soc >= 100.0:
             charge = min(charge, load)            # full: chargers only cover loads
@@ -40,7 +40,7 @@ def sim(days, soc0, since_full0, temp=15.0, cfg=CFG, force=False, die_at=None):
         soc = max(0.0, min(100.0, soc + batt_i * TICK / 3600.0 / CAP_AH * 100.0))
         since_full = 0.0 if soc >= 100.0 else since_full + TICK
         if die_at is None or t < die_at:
-            lim = ctl.step(soc, batt_i, temp, since_full, force, now=t)
+            lim = ctl.step(soc, batt_i, temp, since_full, force, now=t, shore=shore(t))
             if lim != last_w and (last_w is None or abs(lim - last_w) >= 10 or t - last_t >= 60):
                 applied, last_w, last_t = lim, lim, t
                 sim.writes += 1
@@ -95,6 +95,30 @@ print(f"{'6 full charge never syncs':42} state={ctl.state} result={ctl.full_resu
 ok &= ctl.full_result.startswith("timeout") and ctl.state != FULL
 ctl.step(55.0, 0.0, 15.0, 40 * 86400, False, now=31 * 3600)
 ok &= ctl.state != FULL          # cooldown: no immediate retry
+
+# 7. (v1.2) 3-day shore outage while holding: stays engaged, holds on solar, no full charge started
+out_7 = lambda t: not (6 * 3600 <= t < 3 * 86400 + 6 * 3600)
+o, s, c = sim(5, 58.0, 5 * 86400, shore=out_7)
+lo, hi = summary("7 3-day shore outage while holding", o, s, c)
+# below the band with no shore the controller must not throttle solar at all (LOW = no limit)
+throttled_low = [x for x in o if x[1] < 45 and x[4] != LOW]
+unlimited_in_low = all(x[3] >= 150 for x in o if x[4] == LOW)
+print(f"   below 45% without LOW state: {len(throttled_low)} ticks; LOW always unlimited: {unlimited_in_low}")
+ok &= FULL not in s and hi <= 62 and not throttled_low and unlimited_in_low
+
+# 8. (v1.2) full charge falls due during an outage: waits, then runs + syncs after shore returns
+out_8 = lambda t: not (0 <= t < 2 * 86400)
+o, s, c = sim(6, 55.0, 29.9 * 86400, shore=out_8)
+first_full = next((t for (t, *_r, st) in o if st == FULL), None)
+summary("8 full due during outage", o, s, c)
+print(f"   full charge started at {first_full / 3600 if first_full is not None else None} h (shore back at 48 h)")
+ok &= first_full is not None and first_full >= 2 * 86400 and c.full_result == "ok"
+
+# 9. (v1.2) shore lost mid full charge for 2 days: no timeout, finishes after shore returns (or on solar)
+out_9 = lambda t: not (2 * 3600 <= t < 2 * 86400 + 2 * 3600)
+o, s, c = sim(6, 40.0, 40 * 86400, shore=out_9)
+summary("9 shore lost during full charge", o, s, c)
+ok &= c.full_result == "ok"
 
 print("PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)
